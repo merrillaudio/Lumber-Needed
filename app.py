@@ -176,9 +176,9 @@ def generate_pdf(purchased_boards, leftovers=None):
     drawing_linewidth = 1.0
 
     with PdfPages(buffer) as pdf:
+        # Generate a page for each purchased board
         for board in purchased_boards:
             b = board['board']
-            # Display board dimensions in a friendly format: length in feet and width in inches.
             board_title = (
                 f"Board {board['board_id']} - "
                 f"{b['length_ft']:.1f} ft x {b['width_in']:.1f}\" "
@@ -240,7 +240,7 @@ def generate_pdf(purchased_boards, leftovers=None):
             pdf.savefig(fig)
             plt.close(fig)
         
-        # Extra page for leftover pieces (if any)
+        # Add an extra page for leftover pieces if any exist.
         if leftovers:
             fig, ax = plt.subplots(figsize=(page_width, page_height))
             ax.axis('off')
@@ -259,6 +259,33 @@ def generate_pdf(purchased_boards, leftovers=None):
             plt.tight_layout()
             pdf.savefig(fig)
             plt.close(fig)
+        
+        # ---- Summary Page: Boards Needed ----
+        # Aggregate the purchased boards by their dimensions
+        summary_data = {}
+        for board in purchased_boards:
+            dims = (board['board']['length_ft'], board['board']['width_in'])
+            summary_data[dims] = summary_data.get(dims, 0) + 1
+
+        # Create summary page
+        fig, ax = plt.subplots(figsize=(page_width, page_height))
+        ax.axis('off')
+        ax.set_title("Summary of Boards Purchased", fontsize=14)
+        text_lines = []
+        text_lines.append(f"{'Board Dimensions':<20} {'Quantity':>10}")
+        text_lines.append("-" * 32)
+        for dims, qty in sorted(summary_data.items()):
+            length_ft, width_in = dims
+            # Format: "X ft x Y" where Y is in inches.
+            dims_str = f"{length_ft:.1f} ft x {width_in:.1f}\""
+            line = f"{dims_str:<20} {qty:>10}"
+            text_lines.append(line)
+        text = "\n".join(text_lines)
+        ax.text(0.1, 0.9, text, fontsize=12, family='monospace', va='top')
+        plt.tight_layout()
+        pdf.savefig(fig)
+        plt.close(fig)
+        
     buffer.seek(0)
     return buffer
 
