@@ -225,10 +225,15 @@ if 'required_df' not in st.session_state:
 st.sidebar.header("Destination")
 col1, col2 = st.sidebar.columns([3, 1])
 with col1:
-    new_job = st.text_input("Add/Select Job", key="job_name_input")
+    query_params = st.experimental_get_query_params()
+clear_input = query_params.get("clear_input", ["false"])[0] == "true"
+new_job = "" if clear_input else st.text_input("Add/Select Job", key="job_name_input")
+if clear_input:
+    st.experimental_set_query_params()
 with col2:
     if st.button("➕") and new_job:
         st.session_state.job_names.add(new_job)
+        st.experimental_set_query_params(clear_input="true")
         st.session_state["job_name_input"] = ""
         st.session_state.job_names.add(new_job)
     if st.button("➖") and new_job in st.session_state.job_names:
