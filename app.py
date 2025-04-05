@@ -213,9 +213,8 @@ def generate_pdf(purchased_boards, leftovers=None):
                 piece_label = f"{to_fraction_string(piece['length'])}\" x {to_fraction_string(piece['width'])}\""
                 if 'job' in piece and piece['job']:
                     piece_label += f"
-{piece['job']}"}\" x "
-                    f"{to_fraction_string(cut['piece']['width'])}\""
-                )
+{piece['job']}"
+
                 ax_draw.text(
                     cut['x'] + cut['length'] / 2,
                     cut['y'] + cut['width'] / 2,
