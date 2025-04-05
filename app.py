@@ -254,9 +254,6 @@ st.session_state.required_df = st.data_editor(
     num_rows="dynamic",
     key="data_editor_with_dropdown"
 )
-    },
-    num_rows="dynamic", use_container_width=True
-)
 
 if st.button("🔨 Optimize Lumber Purchase"):
     purchase_plan, leftovers, total_cost = optimize_lumber_purchase(st.session_state.required_df, kerf, thickness, cost_per_bf)
