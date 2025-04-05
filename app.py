@@ -1,4 +1,3 @@
-# --- All imports
 import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -10,7 +9,7 @@ import json
 import yaml
 from fractions import Fraction
 
-# --- Measurement parsing and utilities
+# ---- Helper Functions ----
 def parse_measurement(value):
     if isinstance(value, (int, float)):
         return float(value)
@@ -43,29 +42,30 @@ def to_fraction_string(value):
 def calculate_board_feet(length, width, thickness=0.75):
     return (thickness * width * length) / 144
 
-# --- Convert required cuts into individual pieces
+# ---- Convert input into individual cut pieces
 def generate_required_pieces(required_df):
     pieces = []
+    skipped_rows = 0
     for _, row in required_df.iterrows():
         try:
             quantity = int(parse_measurement(row.get('Quantity', 1)))
+            length = parse_measurement(row.get('Length'))
+            width = parse_measurement(row.get('Width'))
+            project_name = row.get('Project Name', '').strip() or ''
+            if length is None or width is None or quantity is None:
+                raise ValueError
+            for _ in range(quantity):
+                pieces.append({
+                    'length': length,
+                    'width': width,
+                    'project_name': project_name,
+                    'id': f"{length:.3f}x{width:.3f}"
+                })
         except:
-            quantity = 1
-        length = parse_measurement(row.get('Length'))
-        width = parse_measurement(row.get('Width'))
-        project_name = row.get('Project Name', '').strip() or ''
-        if length is None or width is None:
-            continue
-        for _ in range(quantity):
-            pieces.append({
-                'length': length,
-                'width': width,
-                'project_name': project_name,
-                'id': f"{length:.3f}x{width:.3f}"
-            })
-    return sorted(pieces, key=lambda x: max(x['length'], x['width']), reverse=True)
+            skipped_rows += 1
+    return sorted(pieces, key=lambda x: max(x['length'], x['width']), reverse=True), skipped_rows
 
-# --- Piece placement logic
+# ---- Placement Algorithm
 def try_place_pieces(board, pieces, kerf):
     free_rectangles = [{'x': 0, 'y': 0, 'length': board['length'], 'width': board['width']}]
     placements = []
@@ -101,15 +101,16 @@ def try_place_pieces(board, pieces, kerf):
             remaining.append(piece)
     return placements, remaining
 
-# --- Main optimizer
+# ---- Optimization Driver
 def optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf):
-    pieces = generate_required_pieces(required_df)
+    pieces, skipped_rows = generate_required_pieces(required_df)
     purchased_boards = []
     board_counter = 1
     allowed_lengths_ft = [8, 10, 12]
     allowed_lengths_in = [ft * 12 for ft in allowed_lengths_ft]
-    allowed_widths = [4 + 0.5*i for i in range(int((12 - 4) / 0.5) + 1)]
+    allowed_widths = [4 + 0.5 * i for i in range(int((12 - 4) / 0.5) + 1)]
     allowed_boards = [{'length': L, 'width': W, 'length_ft': L / 12, 'width_in': W} for L in allowed_lengths_in for W in allowed_widths]
+
     while pieces:
         best_utilization = 0
         best_candidate = None
@@ -124,12 +125,11 @@ def optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf):
                     best_utilization = utilization
                     best_candidate = board
                     best_placements = placements
-        if best_candidate is None:
-            st.error("One or more required pieces are too big for any available board option.")
+        if not best_candidate:
+            st.error("❌ Some pieces are too large to fit any board. Please adjust your dimensions.")
             break
-        for placement in best_placements:
-            if placement['piece'] in pieces:
-                pieces.remove(placement['piece'])
+        for p in best_placements:
+            pieces.remove(p['piece'])
         board_bf = calculate_board_feet(best_candidate['length'], best_candidate['width'], thickness)
         purchased_boards.append({
             'board_id': board_counter,
@@ -139,29 +139,52 @@ def optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf):
             'board_feet': board_bf
         })
         board_counter += 1
-    total_cost = sum(b['board_feet'] * cost_per_bf for b in purchased_boards)
-    return purchased_boards, pieces, total_cost
 
-# --- PDF Export
+    total_cost = sum(b['board_feet'] * cost_per_bf for b in purchased_boards)
+    return purchased_boards, pieces, total_cost, skipped_rows
+
+# ---- CSV Export
+def generate_csv(purchased_boards, job_name=""):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Job Name', 'Board ID', 'Piece ID', 'Project Name', 'Length', 'Width', 'Rotated', 'X', 'Y'])
+    for board in purchased_boards:
+        for cut in board['cuts']:
+            piece = cut['piece']
+            writer.writerow([
+                job_name,
+                board['board_id'],
+                piece['id'],
+                piece.get('project_name', ''),
+                f"{cut['length']:.3f}",
+                f"{cut['width']:.3f}",
+                cut['rotated'],
+                round(cut['x'], 2),
+                round(cut['y'], 2)
+            ])
+    return output.getvalue()
+
+# ---- PDF Export
 def generate_pdf(purchased_boards, leftovers=None, job_name=""):
     buffer = io.BytesIO()
     with PdfPages(buffer) as pdf:
         for board in purchased_boards:
             b = board['board']
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 11), gridspec_kw={'height_ratios': [5, 1]})
-            ax1.set_title(
-                f"{job_name} - Board {board['board_id']} - {b['length_ft']:.1f} ft x {b['width_in']:.1f}\" "
-                f"({board['board_feet']:.2f} bf, Utilization: {board['utilization']*100:.1f}%)",
-                fontsize=12, color='red'
-            )
+            ax1.set_title(f"{job_name} - Board {board['board_id']} - {b['length_ft']:.1f} ft x {b['width_in']:.1f}\" "
+                          f"({board['board_feet']:.2f} bf, Utilization: {board['utilization'] * 100:.1f}%)",
+                          fontsize=12, color='red')
             ax1.set_xlim(0, b['length'])
             ax1.set_ylim(0, b['width'])
             ax1.set_aspect('equal')
+
             for cut in board['cuts']:
-                ax1.add_patch(patches.Rectangle((cut['x'], cut['y']), cut['length'], cut['width'], linewidth=1.0, edgecolor='black', facecolor='lightgrey'))
+                ax1.add_patch(patches.Rectangle((cut['x'], cut['y']), cut['length'], cut['width'],
+                                                linewidth=1.0, edgecolor='black', facecolor='lightgrey'))
                 ax1.text(cut['x'] + cut['length']/2, cut['y'] + cut['width']/2,
                          f"{to_fraction_string(cut['piece']['length'])}\" x {to_fraction_string(cut['piece']['width'])}\"",
                          ha='center', va='center', fontsize=8, color='red')
+
             ax2.axis('off')
             rows = [f"{cut['piece']['id']:<12} {cut['piece'].get('project_name',''):<15} {to_fraction_string(cut['x']):>6} {to_fraction_string(cut['y']):>6} "
                     f"{to_fraction_string(cut['length']):>8} {to_fraction_string(cut['width']):>8} {'Yes' if cut.get('rotated') else 'No':>8}"
@@ -194,33 +217,18 @@ def generate_pdf(purchased_boards, leftovers=None, job_name=""):
         ax.text(0.1, 0.9, "\n".join(text_lines), fontsize=12, family='monospace', va='top')
         pdf.savefig(fig)
         plt.close(fig)
+
     buffer.seek(0)
     return buffer
 
-# --- CSV Export
-def generate_csv(purchased_boards, job_name=""):
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Job Name', 'Board ID', 'Piece ID', 'Project Name', 'Length', 'Width', 'Rotated', 'X', 'Y'])
-    for board in purchased_boards:
-        for cut in board['cuts']:
-            piece = cut['piece']
-            writer.writerow([
-                job_name,
-                board['board_id'],
-                piece['id'],
-                piece.get('project_name', ''),
-                f"{cut['length']:.3f}",
-                f"{cut['width']:.3f}",
-                cut['rotated'],
-                round(cut['x'], 2),
-                round(cut['y'], 2)
-            ])
-    return output.getvalue()
-
-# --- Save/load to JSON/YAML
+# ---- JSON/YAML persistence
 def save_plan_to_json(plan, leftovers, required_df, job_name=""):
-    return json.dumps({'job_name': job_name, 'purchase_plan': plan, 'leftovers': leftovers, 'required_input': required_df.to_dict(orient='records')}, indent=2)
+    return json.dumps({
+        'job_name': job_name,
+        'purchase_plan': plan,
+        'leftovers': leftovers,
+        'required_input': required_df.to_dict(orient='records')
+    }, indent=2)
 
 def load_plan_from_json(json_data):
     data = json.loads(json_data)
@@ -228,14 +236,19 @@ def load_plan_from_json(json_data):
     return data['purchase_plan'], data.get('leftovers', []), pd.DataFrame(data.get('required_input', []))
 
 def save_plan_to_yaml(plan, leftovers, required_df, job_name=""):
-    return yaml.dump({'job_name': job_name, 'purchase_plan': plan, 'leftovers': leftovers, 'required_input': required_df.to_dict(orient='records')})
+    return yaml.dump({
+        'job_name': job_name,
+        'purchase_plan': plan,
+        'leftovers': leftovers,
+        'required_input': required_df.to_dict(orient='records')
+    })
 
 def load_plan_from_yaml(yaml_data):
     data = yaml.safe_load(yaml_data)
     st.session_state["job_name"] = data.get("job_name", "")
     return data['purchase_plan'], data.get('leftovers', []), pd.DataFrame(data.get('required_input', []))
 
-# --- Streamlit App
+# ---- Streamlit UI
 st.set_page_config(page_title="Lumber Purchase Optimizer", layout="wide")
 st.title("📐 Lumber Purchase Optimizer")
 
@@ -257,13 +270,18 @@ def default_cut_df():
     return pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2, "Project Name": ""}])
 required_df = st.data_editor(st.session_state.get('required_df', default_cut_df()), num_rows="dynamic", use_container_width=True)
 
+# ---- Optimization Trigger
 if st.button("🔨 Optimize Lumber Purchase"):
-    purchase_plan, leftovers, total_cost = optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf)
+    purchase_plan, leftovers, total_cost, skipped_rows = optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf)
     st.session_state.purchase_plan = purchase_plan
     st.session_state.leftovers = leftovers
     st.session_state.required_df = required_df
+
     total_board_feet = sum(b['board_feet'] for b in purchase_plan)
     st.success(f"Optimization complete! Total board feet purchased: {total_board_feet:.2f}, Estimated Total Cost: ${total_cost:.2f}")
+
+    if skipped_rows:
+        st.warning(f"⚠️ {skipped_rows} row(s) were skipped due to missing or invalid Length, Width, or Quantity.")
 
     csv_data = generate_csv(purchase_plan, job_name=job_name)
     pdf_data = generate_pdf(purchase_plan, leftovers, job_name=job_name)
@@ -271,7 +289,6 @@ if st.button("🔨 Optimize Lumber Purchase"):
     st.download_button("📄 Download CSV", csv_data, file_name=f"{job_name or 'purchase_plan'}.csv", mime="text/csv")
     st.download_button("📄 Download PDF", pdf_data, file_name=f"{job_name or 'purchase_plan'}.pdf")
 
-    # --- Preview layout in-app
     st.subheader("📏 Board Layout Previews")
     for board in purchase_plan:
         b = board['board']
@@ -294,7 +311,7 @@ if st.button("🔨 Optimize Lumber Purchase"):
     if leftovers:
         st.warning("Some required pieces could not be allocated to any board. Please review the leftover pieces.")
 
-# --- Save/Load buttons
+# ---- Save/Load Buttons
 if save_plan_button and 'purchase_plan' in st.session_state:
     if file_format == "JSON":
         saved_data = save_plan_to_json(st.session_state.purchase_plan, st.session_state.leftovers, st.session_state.required_df, job_name)
