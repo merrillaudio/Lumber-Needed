@@ -48,22 +48,25 @@ def generate_required_pieces(required_df):
     skipped_rows = 0
     for _, row in required_df.iterrows():
         try:
-            quantity = int(parse_measurement(row.get('Quantity', 1)))
+            quantity = parse_measurement(row.get('Quantity'))
             length = parse_measurement(row.get('Length'))
             width = parse_measurement(row.get('Width'))
-            project_name = row.get('Project Name', '').strip() or ''
-            if length is None or width is None or quantity is None:
-                raise ValueError
+            if any(val is None for val in [quantity, length, width]):
+                raise ValueError("Missing required dimension")
+
+            project_name = row.get('Project Name', '') or ''
+            quantity = int(quantity)
             for _ in range(quantity):
                 pieces.append({
                     'length': length,
                     'width': width,
-                    'project_name': project_name,
+                    'project_name': str(project_name).strip(),
                     'id': f"{length:.3f}x{width:.3f}"
                 })
         except:
             skipped_rows += 1
     return sorted(pieces, key=lambda x: max(x['length'], x['width']), reverse=True), skipped_rows
+
 
 # ---- Placement Algorithm
 def try_place_pieces(board, pieces, kerf):
