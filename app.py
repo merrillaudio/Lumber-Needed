@@ -1,3 +1,4 @@
+# --- All imports
 import streamlit as st
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -9,7 +10,7 @@ import json
 import yaml
 from fractions import Fraction
 
-# ---- Helper Functions ----
+# --- Measurement parsing and utilities
 def parse_measurement(value):
     if isinstance(value, (int, float)):
         return float(value)
@@ -24,9 +25,25 @@ def parse_measurement(value):
     except:
         return None
 
+def to_fraction_string(value):
+    try:
+        frac = Fraction(value).limit_denominator(16)
+        if frac.denominator == 1:
+            return f"{frac.numerator}"
+        else:
+            whole = frac.numerator // frac.denominator
+            remainder = frac - whole
+            if whole > 0 and remainder:
+                return f"{whole} {remainder.numerator}/{remainder.denominator}"
+            else:
+                return f"{frac.numerator}/{frac.denominator}"
+    except Exception:
+        return str(value)
+
 def calculate_board_feet(length, width, thickness=0.75):
     return (thickness * width * length) / 144
 
+# --- Convert required cuts into individual pieces
 def generate_required_pieces(required_df):
     pieces = []
     for _, row in required_df.iterrows():
@@ -36,21 +53,23 @@ def generate_required_pieces(required_df):
             quantity = 1
         length = parse_measurement(row.get('Length'))
         width = parse_measurement(row.get('Width'))
+        project_name = row.get('Project Name', '').strip() or ''
         if length is None or width is None:
             continue
         for _ in range(quantity):
             pieces.append({
                 'length': length,
                 'width': width,
+                'project_name': project_name,
                 'id': f"{length:.3f}x{width:.3f}"
             })
     return sorted(pieces, key=lambda x: max(x['length'], x['width']), reverse=True)
 
+# --- Piece placement logic
 def try_place_pieces(board, pieces, kerf):
     free_rectangles = [{'x': 0, 'y': 0, 'length': board['length'], 'width': board['width']}]
     placements = []
     remaining = []
-
     for piece in pieces:
         placed = False
         for rect in free_rectangles.copy():
@@ -82,30 +101,19 @@ def try_place_pieces(board, pieces, kerf):
             remaining.append(piece)
     return placements, remaining
 
+# --- Main optimizer
 def optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf):
     pieces = generate_required_pieces(required_df)
     purchased_boards = []
     board_counter = 1
-
     allowed_lengths_ft = [8, 10, 12]
     allowed_lengths_in = [ft * 12 for ft in allowed_lengths_ft]
     allowed_widths = [4 + 0.5*i for i in range(int((12 - 4) / 0.5) + 1)]
-
-    allowed_boards = []
-    for L in allowed_lengths_in:
-        for W in allowed_widths:
-            allowed_boards.append({
-                'length': L,
-                'width': W,
-                'length_ft': L/12,
-                'width_in': W
-            })
-
+    allowed_boards = [{'length': L, 'width': W, 'length_ft': L / 12, 'width_in': W} for L in allowed_lengths_in for W in allowed_widths]
     while pieces:
         best_utilization = 0
         best_candidate = None
         best_placements = None
-
         for board in allowed_boards:
             placements, _ = try_place_pieces(board, pieces, kerf)
             if placements:
@@ -116,16 +124,12 @@ def optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf):
                     best_utilization = utilization
                     best_candidate = board
                     best_placements = placements
-
         if best_candidate is None:
             st.error("One or more required pieces are too big for any available board option.")
             break
-
         for placement in best_placements:
-            piece = placement['piece']
-            if piece in pieces:
-                pieces.remove(piece)
-
+            if placement['piece'] in pieces:
+                pieces.remove(placement['piece'])
         board_bf = calculate_board_feet(best_candidate['length'], best_candidate['width'], thickness)
         purchased_boards.append({
             'board_id': board_counter,
@@ -135,140 +139,88 @@ def optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf):
             'board_feet': board_bf
         })
         board_counter += 1
-
     total_cost = sum(b['board_feet'] * cost_per_bf for b in purchased_boards)
     return purchased_boards, pieces, total_cost
 
-def to_fraction_string(value):
-    try:
-        frac = Fraction(value).limit_denominator(16)
-        if frac.denominator == 1:
-            return f"{frac.numerator}"
-        else:
-            whole = frac.numerator // frac.denominator
-            remainder = frac - whole
-            if whole > 0 and remainder:
-                return f"{whole} {remainder.numerator}/{remainder.denominator}"
-            else:
-                return f"{frac.numerator}/{frac.denominator}"
-    except Exception:
-        return str(value)
-
+# --- PDF Export
 def generate_pdf(purchased_boards, leftovers=None, job_name=""):
     buffer = io.BytesIO()
-    page_width, page_height = 8.5, 11
-
     with PdfPages(buffer) as pdf:
         for board in purchased_boards:
             b = board['board']
-            board_title = (
-                f"{job_name} - Board {board['board_id']} - "
-                f"{b['length_ft']:.1f} ft x {b['width_in']:.1f}\" "
-                f"({board['board_feet']:.2f} bf, Utilization: {board['utilization']*100:.1f}%)"
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.5, 11), gridspec_kw={'height_ratios': [5, 1]})
+            ax1.set_title(
+                f"{job_name} - Board {board['board_id']} - {b['length_ft']:.1f} ft x {b['width_in']:.1f}\" "
+                f"({board['board_feet']:.2f} bf, Utilization: {board['utilization']*100:.1f}%)",
+                fontsize=12, color='red'
             )
-            fig = plt.figure(figsize=(page_width, page_height))
-            gs = fig.add_gridspec(2, 1, height_ratios=[5, 1], hspace=0.3)
-
-            ax_draw = fig.add_subplot(gs[0])
-            ax_draw.set_title(board_title, fontsize=12, color='red')
-            ax_draw.set_xlabel("Inches", fontsize=10)
-            ax_draw.set_ylabel("Inches", fontsize=10)
-            ax_draw.set_xlim(0, b['length'])
-            ax_draw.set_ylim(0, b['width'])
-            ax_draw.set_aspect('equal', adjustable='box')
-
+            ax1.set_xlim(0, b['length'])
+            ax1.set_ylim(0, b['width'])
+            ax1.set_aspect('equal')
             for cut in board['cuts']:
-                rect = patches.Rectangle((cut['x'], cut['y']), cut['length'], cut['width'],
-                                         linewidth=1.0, edgecolor='black', facecolor='lightgrey')
-                ax_draw.add_patch(rect)
-                piece_label = (
-                    f"{to_fraction_string(cut['piece']['length'])}\" x "
-                    f"{to_fraction_string(cut['piece']['width'])}\""
-                )
-                ax_draw.text(
-                    cut['x'] + cut['length'] / 2,
-                    cut['y'] + cut['width'] / 2,
-                    piece_label,
-                    ha='center', va='center',
-                    fontsize=8, color='red'
-                )
-
-            ax_text = fig.add_subplot(gs[1])
-            ax_text.axis('off')
-            text_lines = []
-            header = f"{'Piece ID':<12} {'X':>6} {'Y':>6} {'L':>8} {'W':>8} {'Rotated':>8}"
-            text_lines.append(header)
-            text_lines.append("-" * len(header))
-            for cut in board['cuts']:
-                line = f"{cut['piece']['id']:<12} {to_fraction_string(cut['x']):>6} {to_fraction_string(cut['y']):>6} " \
-                       f"{to_fraction_string(cut['length']):>8} {to_fraction_string(cut['width']):>8} " \
-                       f"{'Yes' if cut.get('rotated', False) else 'No':>8}"
-                text_lines.append(line)
-            ax_text.text(0, 1, "\n".join(text_lines), fontsize=10, family='monospace', va='top')
-
-            plt.tight_layout()
+                ax1.add_patch(patches.Rectangle((cut['x'], cut['y']), cut['length'], cut['width'], linewidth=1.0, edgecolor='black', facecolor='lightgrey'))
+                ax1.text(cut['x'] + cut['length']/2, cut['y'] + cut['width']/2,
+                         f"{to_fraction_string(cut['piece']['length'])}\" x {to_fraction_string(cut['piece']['width'])}\"",
+                         ha='center', va='center', fontsize=8, color='red')
+            ax2.axis('off')
+            rows = [f"{cut['piece']['id']:<12} {cut['piece'].get('project_name',''):<15} {to_fraction_string(cut['x']):>6} {to_fraction_string(cut['y']):>6} "
+                    f"{to_fraction_string(cut['length']):>8} {to_fraction_string(cut['width']):>8} {'Yes' if cut.get('rotated') else 'No':>8}"
+                    for cut in board['cuts']]
+            ax2.text(0, 1, "Piece ID     Project Name     X      Y       L       W   Rotated\n" + "-"*65 + "\n" + "\n".join(rows),
+                     fontsize=10, family='monospace', va='top')
             pdf.savefig(fig)
             plt.close(fig)
 
         if leftovers:
-            fig, ax = plt.subplots(figsize=(page_width, page_height))
+            fig, ax = plt.subplots(figsize=(8.5, 11))
             ax.axis('off')
             ax.set_title(f"Leftover Pieces - {job_name}", fontsize=12)
-            text_lines = [f"{'Length':>8} {'Width':>8}", "-" * 17]
-            for piece in leftovers:
-                text_lines.append(f"{to_fraction_string(piece['length']):>8} {to_fraction_string(piece['width']):>8}")
-            ax.text(0, 1, "\n".join(text_lines), fontsize=10, family='monospace', va='top')
-            plt.tight_layout()
+            rows = [f"{to_fraction_string(p['length']):>8} {to_fraction_string(p['width']):>8}" for p in leftovers]
+            ax.text(0, 1, "Length    Width\n" + "-"*17 + "\n" + "\n".join(rows), fontsize=10, family='monospace', va='top')
             pdf.savefig(fig)
             plt.close(fig)
 
-        fig, ax = plt.subplots(figsize=(page_width, page_height))
+        fig, ax = plt.subplots(figsize=(8.5, 11))
         ax.axis('off')
         ax.set_title(f"Summary of Boards Purchased - {job_name}", fontsize=14)
-        summary_data = {}
+        summary = {}
         for board in purchased_boards:
             dims = (board['board']['length_ft'], board['board']['width_in'])
-            summary_data[dims] = summary_data.get(dims, 0) + 1
-
+            summary[dims] = summary.get(dims, 0) + 1
         text_lines = [f"{'Board Dimensions':<20} {'Quantity':>10}", "-" * 32]
-        for dims, qty in sorted(summary_data.items()):
+        for dims, qty in sorted(summary.items()):
             dims_str = f"{dims[0]:.1f} ft x {dims[1]:.1f}\""
             text_lines.append(f"{dims_str:<20} {qty:>10}")
         ax.text(0.1, 0.9, "\n".join(text_lines), fontsize=12, family='monospace', va='top')
-        plt.tight_layout()
         pdf.savefig(fig)
         plt.close(fig)
-
     buffer.seek(0)
     return buffer
 
+# --- CSV Export
 def generate_csv(purchased_boards, job_name=""):
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Job Name', 'Board ID', 'Piece ID', 'Length', 'Width', 'Rotated', 'X', 'Y'])
+    writer.writerow(['Job Name', 'Board ID', 'Piece ID', 'Project Name', 'Length', 'Width', 'Rotated', 'X', 'Y'])
     for board in purchased_boards:
         for cut in board['cuts']:
+            piece = cut['piece']
             writer.writerow([
                 job_name,
                 board['board_id'],
-                cut['piece']['id'],
+                piece['id'],
+                piece.get('project_name', ''),
                 f"{cut['length']:.3f}",
                 f"{cut['width']:.3f}",
                 cut['rotated'],
                 round(cut['x'], 2),
                 round(cut['y'], 2)
             ])
-    output.seek(0)
     return output.getvalue()
 
+# --- Save/load to JSON/YAML
 def save_plan_to_json(plan, leftovers, required_df, job_name=""):
-    data = {
-        'job_name': job_name,
-        'purchase_plan': plan,
-        'leftovers': leftovers,
-        'required_input': required_df.to_dict(orient='records')
-    }
-    return json.dumps(data, indent=2)
+    return json.dumps({'job_name': job_name, 'purchase_plan': plan, 'leftovers': leftovers, 'required_input': required_df.to_dict(orient='records')}, indent=2)
 
 def load_plan_from_json(json_data):
     data = json.loads(json_data)
@@ -276,28 +228,20 @@ def load_plan_from_json(json_data):
     return data['purchase_plan'], data.get('leftovers', []), pd.DataFrame(data.get('required_input', []))
 
 def save_plan_to_yaml(plan, leftovers, required_df, job_name=""):
-    data = {
-        'job_name': job_name,
-        'purchase_plan': plan,
-        'leftovers': leftovers,
-        'required_input': required_df.to_dict(orient='records')
-    }
-    return yaml.dump(data)
+    return yaml.dump({'job_name': job_name, 'purchase_plan': plan, 'leftovers': leftovers, 'required_input': required_df.to_dict(orient='records')})
 
 def load_plan_from_yaml(yaml_data):
     data = yaml.safe_load(yaml_data)
     st.session_state["job_name"] = data.get("job_name", "")
     return data['purchase_plan'], data.get('leftovers', []), pd.DataFrame(data.get('required_input', []))
 
-# ---- Streamlit App UI ----
+# --- Streamlit App
 st.set_page_config(page_title="Lumber Purchase Optimizer", layout="wide")
 st.title("📐 Lumber Purchase Optimizer")
 
-# Job Name input
 job_name = st.text_input("Job Name", value=st.session_state.get("job_name", ""))
 st.session_state["job_name"] = job_name
 
-# Sidebar
 st.sidebar.header("Cut & Cost Settings")
 kerf = st.sidebar.number_input("Kerf Size (inches)", value=0.125, step=0.001, format="%.3f")
 thickness = st.sidebar.number_input("Board Thickness (inches)", value=0.75, step=0.01)
@@ -308,21 +252,16 @@ file_format = st.sidebar.radio("Select File Format", options=["JSON", "YAML"])
 save_plan_button = st.sidebar.button("Save Plan")
 load_file = st.sidebar.file_uploader("Load Plan File", type=["json", "yaml", "yml"])
 
-# Required cuts input
 st.subheader("Required Cuts")
 def default_cut_df():
-    return pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2}])
-required_df = st.data_editor(
-    st.session_state.get('required_df', default_cut_df()),
-    num_rows="dynamic", use_container_width=True)
+    return pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2, "Project Name": ""}])
+required_df = st.data_editor(st.session_state.get('required_df', default_cut_df()), num_rows="dynamic", use_container_width=True)
 
-# Run optimization
 if st.button("🔨 Optimize Lumber Purchase"):
     purchase_plan, leftovers, total_cost = optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf)
     st.session_state.purchase_plan = purchase_plan
     st.session_state.leftovers = leftovers
     st.session_state.required_df = required_df
-
     total_board_feet = sum(b['board_feet'] for b in purchase_plan)
     st.success(f"Optimization complete! Total board feet purchased: {total_board_feet:.2f}, Estimated Total Cost: ${total_cost:.2f}")
 
@@ -332,10 +271,30 @@ if st.button("🔨 Optimize Lumber Purchase"):
     st.download_button("📄 Download CSV", csv_data, file_name=f"{job_name or 'purchase_plan'}.csv", mime="text/csv")
     st.download_button("📄 Download PDF", pdf_data, file_name=f"{job_name or 'purchase_plan'}.pdf")
 
+    # --- Preview layout in-app
+    st.subheader("📏 Board Layout Previews")
+    for board in purchase_plan:
+        b = board['board']
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.set_title(f"{job_name} - Board {board['board_id']} ({b['length_ft']:.1f} ft x {b['width_in']:.1f}\", Utilization: {board['utilization'] * 100:.1f}%)", fontsize=12, color='red')
+        ax.set_xlim(0, b['length'])
+        ax.set_ylim(0, b['width'])
+        ax.set_aspect('equal')
+        ax.set_xlabel("Length (in)")
+        ax.set_ylabel("Width (in)")
+        for cut in board['cuts']:
+            rect = patches.Rectangle((cut['x'], cut['y']), cut['length'], cut['width'], linewidth=1.0, edgecolor='black', facecolor='lightblue')
+            ax.add_patch(rect)
+            label = f"{to_fraction_string(cut['piece']['length'])}\" x {to_fraction_string(cut['piece']['width'])}\""
+            if cut['piece'].get('project_name'):
+                label += f"\n({cut['piece']['project_name']})"
+            ax.text(cut['x'] + cut['length'] / 2, cut['y'] + cut['width'] / 2, label, ha='center', va='center', fontsize=8)
+        st.pyplot(fig)
+
     if leftovers:
         st.warning("Some required pieces could not be allocated to any board. Please review the leftover pieces.")
 
-# Save Plan
+# --- Save/Load buttons
 if save_plan_button and 'purchase_plan' in st.session_state:
     if file_format == "JSON":
         saved_data = save_plan_to_json(st.session_state.purchase_plan, st.session_state.leftovers, st.session_state.required_df, job_name)
@@ -344,7 +303,6 @@ if save_plan_button and 'purchase_plan' in st.session_state:
         saved_data = save_plan_to_yaml(st.session_state.purchase_plan, st.session_state.leftovers, st.session_state.required_df, job_name)
         st.sidebar.download_button("Download YAML", saved_data, file_name=f"{job_name or 'purchase_plan'}.yaml", mime="text/yaml")
 
-# Load Plan
 if load_file:
     file_content = load_file.read().decode("utf-8")
     if load_file.name.endswith(".json"):
@@ -354,5 +312,4 @@ if load_file:
     st.session_state.purchase_plan = purchase_plan
     st.session_state.leftovers = leftovers
     st.session_state.required_df = required_df
-    if hasattr(st, 'experimental_rerun'):
-        st.experimental_rerun()
+    st.experimental_rerun()
