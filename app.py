@@ -226,16 +226,18 @@ st.sidebar.header("Destination")
 col1, col2 = st.sidebar.columns([3, 1])
 with col1:
     query_params = st.query_params
-clear_input = query_params.get("clear_input", ["false"])[0] == "true"
-new_job = "" if clear_input else st.text_input("Add/Select Job", key="job_name_input")
-if clear_input:
-    st.experimental_set_query_params()
+    clear_input = query_params.get("clear_input", ["false"])[0] == "true"
+    if clear_input:
+        new_job = ""
+        st.experimental_set_query_params()
+    else:
+        new_job = st.text_input("Add/Select Job", key="job_name_input")
 with col2:
     if st.button("➕") and new_job:
         st.session_state.job_names.add(new_job)
         st.experimental_set_query_params(clear_input="true")
-        st.session_state["job_name_input"] = ""
-        st.session_state.job_names.add(new_job)
+        # field will be cleared through query param
+        pass
     if st.button("➖") and new_job in st.session_state.job_names:
         st.session_state.job_names.remove(new_job)
 
