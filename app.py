@@ -229,6 +229,8 @@ with col1:
 with col2:
     if st.button("➕") and new_job:
         st.session_state.job_names.add(new_job)
+        st.session_state["job_name_input"] = ""
+        st.session_state.job_names.add(new_job)
     if st.button("➖") and new_job in st.session_state.job_names:
         st.session_state.job_names.remove(new_job)
 
