@@ -187,6 +187,8 @@ st.title("📐 Lumber Purchase Optimizer")
 
 if 'job_names' not in st.session_state:
     st.session_state.job_names = set()
+if 'required_df' not in st.session_state:
+    st.session_state.required_df = pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2, "Job": ""}])
 
 st.sidebar.header("Destination")
 col1, col2 = st.sidebar.columns([3, 1])
@@ -208,12 +210,9 @@ file_format = st.sidebar.radio("Select File Format", options=["JSON", "YAML"])
 save_plan_button = st.sidebar.button("Save Plan")
 load_file = st.sidebar.file_uploader("Load Plan File", type=["json", "yaml", "yml"])
 
-def default_cut_df():
-    return pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2, "Job": new_job or ""}])
-
 job_options = sorted(list(st.session_state.job_names))
-required_df = st.data_editor(
-    st.session_state.get('required_df', default_cut_df()),
+st.session_state.required_df = st.data_editor(
+    st.session_state.required_df,
     column_config={
         "Job": st.column_config.SelectboxColumn("Job", options=job_options)
     },
@@ -221,10 +220,9 @@ required_df = st.data_editor(
 )
 
 if st.button("🔨 Optimize Lumber Purchase"):
-    purchase_plan, leftovers, total_cost = optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf)
+    purchase_plan, leftovers, total_cost = optimize_lumber_purchase(st.session_state.required_df, kerf, thickness, cost_per_bf)
     st.session_state.purchase_plan = purchase_plan
     st.session_state.leftovers = leftovers
-    st.session_state.required_df = required_df
 
     total_board_feet = sum(b['board_feet'] for b in purchase_plan)
     st.success(f"Optimization complete! Total board feet purchased: {total_board_feet:.2f}, Estimated Total Cost: ${total_cost:.2f}")
@@ -232,7 +230,6 @@ if st.button("🔨 Optimize Lumber Purchase"):
     preview_board_layout(purchase_plan)
 
     csv_data = generate_csv(purchase_plan)
-    # Assume generate_pdf now includes job in output (not shown here)
     pdf_data = generate_pdf(purchase_plan, leftovers)
 
     st.download_button("📄 Download CSV", csv_data, file_name="purchase_plan.csv", mime="text/csv")
