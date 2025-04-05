@@ -222,19 +222,6 @@ if 'job_names' not in st.session_state:
 if 'required_df' not in st.session_state:
     st.session_state.required_df = pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2, "Job": ""}])
 
-st.sidebar.header("Destination")
-col1, col2 = st.sidebar.columns([3, 1])
-with col1:
-    new_job = st.text_input("Add/Select Job", key="job_name_input")
-with col2:
-    if st.button("➕") and new_job:
-        st.session_state.job_names.add(new_job)
-        # removed query param-based clearing
-        # field will be cleared through query param
-        pass
-    if st.button("➖") and new_job in st.session_state.job_names:
-        st.session_state.job_names.remove(new_job)
-
 st.sidebar.header("Cut & Cost Settings")
 kerf = st.sidebar.number_input("Kerf Size (inches)", value=0.125, step=0.001, format="%.3f")
 thickness = st.sidebar.number_input("Board Thickness (inches)", value=0.75, step=0.01)
