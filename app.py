@@ -95,7 +95,7 @@ def optimize_lumber_purchase(required_df, kerf, thickness, cost_per_bf):
     board_counter = 1
     
     # Allowed board lengths in feet and corresponding inches
-    allowed_lengths_ft = [5, 6, 8, 10, 12]
+    allowed_lengths_ft = [8, 10, 12, 14]
     allowed_lengths_in = [ft * 12 for ft in allowed_lengths_ft]
     # Allowed board widths (inches): 4" up to 12" in 1/2" increments.
     allowed_widths = [4 + 0.5*i for i in range(int((12 - 4) / 0.5) + 1)]
