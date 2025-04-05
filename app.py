@@ -162,6 +162,25 @@ def preview_board_layout(purchased_boards):
             ax.text(cut['x'] + cut['length']/2, cut['y'] + cut['width']/2, label, ha='center', va='center', fontsize=6, color='red')
         st.pyplot(fig)
 
+def generate_csv(purchased_boards):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Board ID', 'Piece ID', 'Length', 'Width', 'Rotated', 'X', 'Y', 'Job'])
+    for board in purchased_boards:
+        for cut in board['cuts']:
+            writer.writerow([
+                board['board_id'],
+                cut['piece']['id'],
+                f"{cut['length']:.3f}",
+                f"{cut['width']:.3f}",
+                cut['rotated'],
+                round(cut['x'], 2),
+                round(cut['y'], 2),
+                cut['piece'].get('job', '')
+            ])
+    output.seek(0)
+    return output.getvalue()
+
 # ---- Streamlit App UI ----
 st.set_page_config(page_title="Lumber Purchase Optimizer", layout="wide")
 st.title("📐 Lumber Purchase Optimizer")
@@ -169,10 +188,15 @@ st.title("📐 Lumber Purchase Optimizer")
 if 'job_names' not in st.session_state:
     st.session_state.job_names = set()
 
-st.sidebar.header("Job Info")
-job_name = st.sidebar.text_input("Job Name", value="Default Job")
-if job_name:
-    st.session_state.job_names.add(job_name)
+st.sidebar.header("Destination")
+col1, col2 = st.sidebar.columns([3, 1])
+with col1:
+    new_job = st.text_input("Add/Select Job", key="job_name_input")
+with col2:
+    if st.button("➕") and new_job:
+        st.session_state.job_names.add(new_job)
+    if st.button("➖") and new_job in st.session_state.job_names:
+        st.session_state.job_names.remove(new_job)
 
 st.sidebar.header("Cut & Cost Settings")
 kerf = st.sidebar.number_input("Kerf Size (inches)", value=0.125, step=0.001, format="%.3f")
@@ -185,9 +209,9 @@ save_plan_button = st.sidebar.button("Save Plan")
 load_file = st.sidebar.file_uploader("Load Plan File", type=["json", "yaml", "yml"])
 
 def default_cut_df():
-    return pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2, "Job": job_name}])
+    return pd.DataFrame([{"Length": "24", "Width": "6", "Quantity": 2, "Job": new_job or ""}])
 
-job_options = list(st.session_state.job_names)
+job_options = sorted(list(st.session_state.job_names))
 required_df = st.data_editor(
     st.session_state.get('required_df', default_cut_df()),
     column_config={
@@ -208,6 +232,7 @@ if st.button("🔨 Optimize Lumber Purchase"):
     preview_board_layout(purchase_plan)
 
     csv_data = generate_csv(purchase_plan)
+    # Assume generate_pdf now includes job in output (not shown here)
     pdf_data = generate_pdf(purchase_plan, leftovers)
 
     st.download_button("📄 Download CSV", csv_data, file_name="purchase_plan.csv", mime="text/csv")
