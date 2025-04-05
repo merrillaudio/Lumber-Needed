@@ -181,6 +181,38 @@ def generate_csv(purchased_boards):
     output.seek(0)
     return output.getvalue()
 
+def save_plan_to_json(plan, leftovers, required_df):
+    data = {
+        'purchase_plan': plan,
+        'leftovers': leftovers,
+        'required_input': required_df.to_dict(orient='records')
+    }
+    return json.dumps(data, indent=2)
+
+def load_plan_from_json(json_data):
+    data = json.loads(json_data)
+    return (
+        data['purchase_plan'],
+        data.get('leftovers', []),
+        pd.DataFrame(data.get('required_input', []))
+    )
+
+def save_plan_to_yaml(plan, leftovers, required_df):
+    data = {
+        'purchase_plan': plan,
+        'leftovers': leftovers,
+        'required_input': required_df.to_dict(orient='records')
+    }
+    return yaml.dump(data)
+
+def load_plan_from_yaml(yaml_data):
+    data = yaml.safe_load(yaml_data)
+    return (
+        data['purchase_plan'],
+        data.get('leftovers', []),
+        pd.DataFrame(data.get('required_input', []))
+    )
+
 # ---- Streamlit App UI ----
 st.set_page_config(page_title="Lumber Purchase Optimizer", layout="wide")
 st.title("📐 Lumber Purchase Optimizer")
@@ -236,3 +268,30 @@ if st.button("🔨 Optimize Lumber Purchase"):
     st.download_button("📄 Download PDF", pdf_data, file_name="purchase_plan.pdf")
     if leftovers:
         st.warning("Some required pieces could not be allocated to any board. Please review the leftover pieces.")
+
+if save_plan_button and 'purchase_plan' in st.session_state:
+    if file_format == "JSON":
+        saved_data = save_plan_to_json(
+            st.session_state.purchase_plan,
+            st.session_state.leftovers,
+            st.session_state.required_df
+        )
+        st.sidebar.download_button("Download JSON", saved_data, file_name="purchase_plan.json", mime="application/json")
+    else:
+        saved_data = save_plan_to_yaml(
+            st.session_state.purchase_plan,
+            st.session_state.leftovers,
+            st.session_state.required_df
+        )
+        st.sidebar.download_button("Download YAML", saved_data, file_name="purchase_plan.yaml", mime="text/yaml")
+
+if load_file:
+    file_content = load_file.read().decode("utf-8")
+    if load_file.name.endswith(".json"):
+        purchase_plan, leftovers, required_df = load_plan_from_json(file_content)
+    else:
+        purchase_plan, leftovers, required_df = load_plan_from_yaml(file_content)
+    st.session_state.purchase_plan = purchase_plan
+    st.session_state.leftovers = leftovers
+    st.session_state.required_df = required_df
+    st.experimental_rerun()
