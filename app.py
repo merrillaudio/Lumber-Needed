@@ -249,8 +249,11 @@ existing_jobs = set(st.session_state.required_df['Job'].dropna().unique())
 job_options = sorted(existing_jobs.union(st.session_state.job_names))
 st.session_state.required_df = st.data_editor(
     st.session_state.required_df,
-    column_config={
-        "Job": st.column_config.SelectboxColumn("Job", options=job_options)
+    column_order=["Length", "Width", "Quantity", "Job"],
+    use_container_width=True,
+    num_rows="dynamic",
+    key="data_editor_with_dropdown"
+)
     },
     num_rows="dynamic", use_container_width=True
 )
