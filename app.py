@@ -242,7 +242,8 @@ file_format = st.sidebar.radio("Select File Format", options=["JSON", "YAML"])
 save_plan_button = st.sidebar.button("Save Plan")
 load_file = st.sidebar.file_uploader("Load Plan File", type=["json", "yaml", "yml"])
 
-job_options = sorted(list(st.session_state.job_names))
+existing_jobs = set(st.session_state.required_df['Job'].dropna().unique())
+job_options = sorted(existing_jobs.union(st.session_state.job_names))
 st.session_state.required_df = st.data_editor(
     st.session_state.required_df,
     column_config={
