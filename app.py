@@ -143,6 +143,8 @@ def generate_pdf(purchased_boards, leftovers=None, job_title=""):
     buffer = io.BytesIO()
     page_width, page_height = 8.5, 11
     with PdfPages(buffer) as pdf:
+
+        # Draw individual board pages (unchanged)
         for board in purchased_boards:
             b = board['board']
             fig = plt.figure(figsize=(page_width, page_height))
@@ -169,6 +171,56 @@ def generate_pdf(purchased_boards, leftovers=None, job_title=""):
             ax_text.text(0, 1, "\n".join(lines), fontsize=10, family='monospace', va='top')
             pdf.savefig(fig)
             plt.close(fig)
+
+        # Build the summary information
+        summary = {}
+        for board in purchased_boards:
+            for cut in board['cuts']:
+                project = cut['piece'].get('project', 'Unknown')
+                bf = calculate_board_feet(cut['piece']['length'], cut['piece']['width'])
+                summary[project] = summary.get(project, 0) + bf
+
+        # Aggregate boards by dimensions
+        board_summary = {}
+        for board in purchased_boards:
+            b = board['board']
+            key = f"{b['length_ft']:.1f} ft x {b['width_in']:.1f}\""
+            board_summary[key] = board_summary.get(key, 0) + 1
+
+        # Build a list of summary lines
+        summary_lines = []
+        summary_lines.append("Lumber Summary by Project")
+        summary_lines.append("")  # blank line for spacing
+        for project, bf in summary.items():
+            summary_lines.append(f"{project}: {bf:.2f} board feet")
+        summary_lines.append("")
+        summary_lines.append("Boards to Purchase:")
+        for board in purchased_boards:
+            b = board['board']
+            summary_lines.append(f"Board {board['board_id']}: {b['length_ft']:.1f} ft x {b['width_in']:.1f}\" ({board['board_feet']:.2f} bf)")
+        summary_lines.append("")
+        summary_lines.append("Aggregate Board Purchase Requirements:")
+        for key, count in board_summary.items():
+            summary_lines.append(f"{key}: {count}")
+
+        # Define layout parameters for the summary text
+        top_y = 0.9        # starting vertical position
+        bottom_y = 0.1     # bottom margin (if needed)
+        line_height = 0.03 # vertical spacing between lines
+        lines_per_page = int((top_y - bottom_y) // line_height)
+
+        # Loop over the summary lines in chunks, creating a new PDF page for each chunk
+        for i in range(0, len(summary_lines), lines_per_page):
+            fig_summary = plt.figure(figsize=(page_width, page_height))
+            ax = fig_summary.add_subplot(111)
+            ax.axis('off')
+            page_chunk = summary_lines[i:i+lines_per_page]
+            y = top_y
+            for line in page_chunk:
+                ax.text(0.1, y, line, fontsize=12, va='top')
+                y -= line_height
+            pdf.savefig(fig_summary)
+            plt.close(fig_summary)
     buffer.seek(0)
     return buffer
 
@@ -300,6 +352,5 @@ if load_file:
     st.session_state.leftovers = leftovers
     st.session_state.required_df = required_df
     st.session_state.job_title = job_title_loaded
-    import streamlit.runtime.scriptrunner.script_run_context as script_run_context
-    if hasattr(st, 'experimental_rerun') and script_run_context.get_script_run_ctx():
-        st.experimental_rerun()
+    st.rerun()
+
